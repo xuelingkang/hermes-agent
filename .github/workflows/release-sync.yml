@@ -1,0 +1,45 @@
+name: release-sync
+
+# 把本仓库（fork）的默认分支重放到上游最新 release tag 上。
+#
+# 不变式：fork 的 main = <上游最新 release tag 的 commit> + 本仓库自己的提交
+# （本文件 + scripts/sync-release.sh）。每次同步把后者 rebase 到新的 release 上。
+#
+# 为什么需要它：hermes update 拉的是 fork 的 main，所以 main 指向哪个 commit，
+# 本机就更新到哪个 commit。保持 main == release，本机就永远落在 release 上。
+on:
+  schedule:
+    # 每天 03:17 / 15:17 UTC（避开整点，减少排队）
+    - cron: '17 3,15 * * *'
+  workflow_dispatch:
+
+# 只推自己的仓库，不需要任何 PAT。
+permissions:
+  contents: write
+
+concurrency:
+  group: release-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 10 —— 脚本要在 main 的历史里找到"上一次的 release commit"，
+      # 所以深度必须大于分支上本地提交的个数（现在 1 个，留足余量）。
+      # 没有新 release 时脚本在解析阶段就退出，不会抓取任何对象。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 10
+
+      # rebase 会创建新 commit，CI runner 上没有 git 身份。
+      - name: 配置 git 身份
+        run: |
+          git config user.name  "release-sync[bot]"
+          git config user.email "release-sync@users.noreply.github.com"
+
+      - name: 同步到上游最新 release
+        env:
+          UPSTREAM_URL: https://github.com/NousResearch/hermes-agent.git
+          TARGET_BRANCH: ${{ github.event.repository.default_branch }}
+        run: bash scripts/sync-release.sh
